@@ -36,6 +36,7 @@ export default function App() {
   const [comments, setComments] = useState<Comment[]>([]);
   const [users, setUsers] = useState<User[]>([]);
 
+  // Check for existing session on mount
   useEffect(() => {
     checkSession();
   }, []);
@@ -43,10 +44,11 @@ export default function App() {
   const checkSession = async () => {
     try {
       const { data: { session } } = await supabase.auth.getSession();
+      
       if (session && session.user) {
-        setupUser(session.user);
+        await setupUser(session.user);
       } else {
-        setLoading(false); // 如果没登录，也要结束 loading
+        setLoading(false);
       }
     } catch (err) {
       console.error('Session check error:', err);
@@ -55,16 +57,29 @@ export default function App() {
   };
 
   const setupUser = async (user: any) => {
+    let avatar = '👤';
+    let name = user.user_metadata?.name || user.email?.split('@')[0] || 'User';
+
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', user.id)
+      .single();
+    
+    if (profile) {
+      name = profile.name;
+      avatar = profile.avatar;
+    }
+
     const userData: User = {
       id: user.id,
-      name: user.user_metadata?.name || user.email?.split('@')[0] || 'User',
-      avatar: '👤',
+      name: name,
+      avatar: avatar,
     };
+
     setCurrentUser(userData);
-    // 修复：把当前用户立即加入用户列表，防止显示 Unknown User
-    setUsers([userData]); 
     setCurrentView('list');
-    await loadDecisions(userData); // 把用户传进去，解决闭包问题
+    await loadData(userData);
     setLoading(false);
   };
 
@@ -78,64 +93,92 @@ export default function App() {
     setCurrentUser(null);
     setCurrentView('login');
     setDecisions([]);
+    setOptions([]);
+    setVotes([]);
+    setReactions([]);
+    setComments([]);
+    setUsers([]);
     toast.success('Signed out successfully');
   };
 
-  // --- Data Loading (修复：字符串转 Date) ---
+  // --- Data Loading ---
 
-  const loadDecisions = async (activeUser?: User) => {
-    const { data, error } = await supabase
-      .from('decisions')
-      .select('*')
-      .order('createdAt', { ascending: false });
-    
-    if (error) {
-      console.error('Error loading decisions:', error);
-      toast.error('Failed to load decisions');
-    } else if (data) {
-      // 关键修复：遍历数据，把字符串类型的 createdAt 转为 Date 对象
-      const fixedData = data.map((d: any) => ({
-        ...d,
-        createdAt: new Date(d.createdAt),
-        deadline: d.deadline ? new Date(d.deadline) : undefined
-      }));
-      setDecisions(fixedData);
-    }
+  const loadData = async (activeUser?: User) => {
+    try {
+      const { data: decisionsData, error: decisionsError } = await supabase
+        .from('decisions')
+        .select('*')
+        .order('createdAt', { ascending: false });
 
-    // 尝试加载其他用户资料 (如果有的话)
-    // 如果没有 profiles 表，就只显示当前用户
-    const currentUserObj = activeUser || currentUser;
-    if (currentUserObj) {
-       setUsers([currentUserObj]);
+      if (decisionsError) throw decisionsError;
+
+      const { data: profilesData, error: profilesError } = await supabase
+        .from('profiles')
+        .select('*');
+
+      if (profilesError) {
+        console.warn('Could not load profiles:', profilesError.message);
+      }
+
+      if (decisionsData) {
+        const fixedDecisions = decisionsData.map((d: any) => ({
+          ...d,
+          createdAt: new Date(d.createdAt),
+          deadline: d.deadline ? new Date(d.deadline) : undefined
+        }));
+        setDecisions(fixedDecisions);
+      }
+
+      let allUsers: User[] = [];
+      if (profilesData && profilesData.length > 0) {
+        allUsers = profilesData as User[];
+      } else {
+        const current = activeUser || currentUser;
+        if (current) allUsers = [current];
+      }
+      setUsers(allUsers);
+
+    } catch (err) {
+      console.error('Error loading data:', err);
+      toast.error('Failed to load data');
     }
   };
 
-  const loadDecisionDetail = async (id: string) => {
-    const [opts, vts, rcts, cmts] = await Promise.all([
-      supabase.from('options').select('*').eq('decisionId', id),
-      supabase.from('votes').select('*').eq('decisionId', id),
-      supabase.from('reactions').select('*').eq('decisionId', id),
-      supabase.from('comments').select('*').eq('decisionId', id).order('createdAt', { ascending: true })
-    ]);
+  const loadDecisionDetail = async (decisionId: string) => {
+    try {
+      const [optionsRes, votesRes, reactionsRes, commentsRes] = await Promise.all([
+        supabase.from('options').select('*').eq('decisionId', decisionId),
+        supabase.from('votes').select('*').eq('decisionId', decisionId),
+        supabase.from('reactions').select('*').eq('decisionId', decisionId),
+        supabase.from('comments').select('*').eq('decisionId', decisionId).order('createdAt', { ascending: true }),
+      ]);
 
-    // 关键修复：同样为详情数据做 Date 转换
-    if (opts.data) {
-      setOptions(opts.data.map((o: any) => ({ ...o, createdAt: new Date(o.createdAt) })));
-    }
-    if (vts.data) {
-      setVotes(vts.data.map((v: any) => ({ ...v, createdAt: new Date(v.createdAt) })));
-    }
-    if (rcts.data) {
-      setReactions(rcts.data.map((r: any) => ({ ...r, createdAt: new Date(r.createdAt) })));
-    }
-    if (cmts.data) {
-      setComments(cmts.data.map((c: any) => ({ ...c, createdAt: new Date(c.createdAt) })));
+      if (optionsRes.error) throw optionsRes.error;
+      if (votesRes.error) throw votesRes.error;
+      if (reactionsRes.error) throw reactionsRes.error;
+      if (commentsRes.error) throw commentsRes.error;
+
+      if (optionsRes.data) {
+        setOptions(optionsRes.data.map((o: any) => ({ ...o, createdAt: new Date(o.createdAt) })));
+      }
+      if (votesRes.data) {
+        setVotes(votesRes.data.map((v: any) => ({ ...v, createdAt: new Date(v.createdAt) })));
+      }
+      if (reactionsRes.data) {
+        setReactions(reactionsRes.data.map((r: any) => ({ ...r, createdAt: new Date(r.createdAt) })));
+      }
+      if (commentsRes.data) {
+        setComments(commentsRes.data.map((c: any) => ({ ...c, createdAt: new Date(c.createdAt) })));
+      }
+    } catch (err) {
+      console.error('Error loading decision detail:', err);
+      toast.error('Failed to load details');
     }
   };
 
   const handleSelectDecision = async (decisionId: string) => {
     setSelectedDecisionId(decisionId);
-    const decision = decisions.find(d => d.id === decisionId);
+    const decision = decisions.find((d) => d.id === decisionId);
     await loadDecisionDetail(decisionId);
     
     if (decision?.status === 'closed') {
@@ -149,224 +192,299 @@ export default function App() {
 
   const handleCreateDecision = async (data: { title: string; description: string }) => {
     if (!currentUser) return;
-    const { data: newDecisionRaw, error } = await supabase
-      .from('decisions')
-      .insert({
-        title: data.title,
-        description: data.description,
-        creatorId: currentUser.id,
-        stage: 'explore',
-        status: 'active'
-      })
-      .select()
-      .single();
 
-    if (error) {
-      toast.error('Failed to create decision');
-    } else if (newDecisionRaw) {
-      // 修复：新创建的数据也要转 Date
+    try {
+      const { data: newDecisionRaw, error } = await supabase
+        .from('decisions')
+        .insert({
+          title: data.title,
+          description: data.description,
+          creatorId: currentUser.id,
+          stage: 'explore',
+          status: 'active'
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+
       const newDecision = {
         ...newDecisionRaw,
         createdAt: new Date(newDecisionRaw.createdAt)
       };
+      
       setDecisions([newDecision, ...decisions]);
-      toast.success('Decision created!');
+      toast.success('Decision created successfully!');
       setShowCreateDialog(false);
+    } catch (err: any) {
+      console.error('Error creating decision:', err);
+      toast.error(err.message || 'Failed to create decision');
     }
   };
 
   const handleAddOption = async (decisionId: string, title: string, description: string) => {
     if (!currentUser) return;
-    const { data: newOptionRaw, error } = await supabase
-      .from('options')
-      .insert({
-        decisionId,
-        title,
-        description,
-        proposedBy: currentUser.id
-      })
-      .select()
-      .single();
 
-    if (error) {
-      toast.error('Failed to add option');
-    } else if (newOptionRaw) {
+    try {
+      const { data: newOptionRaw, error } = await supabase
+        .from('options')
+        .insert({
+          decisionId: decisionId,
+          title,
+          description,
+          proposedBy: currentUser.id,
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+
       const newOption = {
         ...newOptionRaw,
         createdAt: new Date(newOptionRaw.createdAt)
       };
+
       setOptions([...options, newOption]);
-      toast.success('Option added!');
+      toast.success('Option added successfully!');
+    } catch (err: any) {
+      console.error('Error adding option:', err);
+      toast.error('Failed to add option');
     }
   };
 
   const handleVote = async (decisionId: string, optionId: string) => {
     if (!currentUser) return;
-    if (votes.some(v => v.userId === currentUser.id)) {
-      toast.error('You have already voted');
-      return;
-    }
 
-    const { data: newVoteRaw, error } = await supabase
-      .from('votes')
-      .insert({
-        decisionId,
-        optionId,
-        userId: currentUser.id
-      })
-      .select()
-      .single();
+    try {
+      if (votes.some(v => v.userId === currentUser.id)) {
+        toast.error('You have already voted');
+        return;
+      }
 
-    if (error) {
-      toast.error('Vote failed');
-    } else if (newVoteRaw) {
+      const { data: newVoteRaw, error } = await supabase
+        .from('votes')
+        .insert({
+          decisionId: decisionId,
+          optionId: optionId,
+          userId: currentUser.id,
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+
       const newVote = {
         ...newVoteRaw,
         createdAt: new Date(newVoteRaw.createdAt)
       };
+
       setVotes([...votes, newVote]);
-      toast.success('Vote submitted!');
+      toast.success('Vote submitted successfully!');
+    } catch (err: any) {
+      console.error('Error voting:', err);
+      toast.error('Failed to submit vote');
     }
   };
 
   const handleReaction = async (optionId: string, type: ReactionType) => {
     if (!currentUser || !selectedDecisionId) return;
-    
-    const existing = reactions.find(r => r.optionId === optionId && r.userId === currentUser.id && r.type === type);
 
-    if (existing) {
-      // Remove
-      const { error } = await supabase.from('reactions').delete().eq('id', existing.id);
-      if (!error) {
-        setReactions(reactions.filter(r => r.id !== existing.id));
+    try {
+      const existingReaction = reactions.find(
+        r => r.optionId === optionId && r.userId === currentUser.id && r.type === type
+      );
+
+      if (existingReaction) {
+        const { error } = await supabase
+          .from('reactions')
+          .delete()
+          .eq('id', existingReaction.id);
+
+        if (error) throw error;
+        setReactions(reactions.filter((r) => r.id !== existingReaction.id));
         toast.info('Reaction removed');
-      }
-    } else {
-      // Add
-      const { data: newRRaw, error } = await supabase
-        .from('reactions')
-        .insert({
-          decisionId: selectedDecisionId,
-          optionId,
-          userId: currentUser.id,
-          type
-        })
-        .select()
-        .single();
-      
-      if (!error && newRRaw) {
-        const newR = {
+      } else {
+        const { data: newRRaw, error } = await supabase
+          .from('reactions')
+          .insert({
+            decisionId: selectedDecisionId,
+            optionId: optionId,
+            userId: currentUser.id,
+            type: type,
+          })
+          .select()
+          .single();
+
+        if (error) throw error;
+
+        const newReaction = {
           ...newRRaw,
           createdAt: new Date(newRRaw.createdAt)
         };
-        setReactions([...reactions, newR]);
+        setReactions([...reactions, newReaction]);
         toast.success('Reaction added');
       }
+    } catch (err: any) {
+      console.error('Error toggling reaction:', err);
     }
   };
 
   const handleAddComment = async (decisionId: string, content: string) => {
     if (!currentUser) return;
-    const { data: newCommentRaw, error } = await supabase
-      .from('comments')
-      .insert({
-        decisionId,
-        content,
-        userId: currentUser.id
-      })
-      .select()
-      .single();
 
-    if (error) {
-      toast.error('Failed to post comment');
-    } else if (newCommentRaw) {
+    try {
+      const { data: newCommentRaw, error } = await supabase
+        .from('comments')
+        .insert({
+          decisionId: decisionId,
+          content,
+          userId: currentUser.id,
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+
       const newComment = {
         ...newCommentRaw,
         createdAt: new Date(newCommentRaw.createdAt)
       };
       setComments([...comments, newComment]);
-      toast.success('Comment posted!');
+      toast.success('Comment posted successfully!');
+    } catch (err: any) {
+      console.error('Error adding comment:', err);
+      toast.error('Failed to post comment');
     }
   };
 
   const handleChangeStage = async (decisionId: string, stage: Decision['stage']) => {
     if (!currentUser) return;
-    
-    const { data: updatedRaw, error } = await supabase
-      .from('decisions')
-      .update({ stage })
-      .eq('id', decisionId)
-      .select()
-      .single();
 
-    if (error) {
-      toast.error('Failed to update stage');
-      return;
-    }
+    try {
+      const { data: updatedRaw, error } = await supabase
+        .from('decisions')
+        .update({ stage })
+        .eq('id', decisionId)
+        .select()
+        .single();
 
-    if (stage === 'explore') {
-      await supabase.from('votes').delete().eq('decisionId', decisionId);
-      setVotes([]);
-      toast.info('Returned to explore. Votes cleared.');
-    } else {
-      toast.success('Entered voting phase');
-    }
-    
-    const updated = {
+      if (error) throw error;
+
+      if (stage === 'explore') {
+        await supabase.from('votes').delete().eq('decisionId', decisionId);
+        setVotes([]);
+        toast.info('Returned to exploration phase. Votes cleared.');
+      } else {
+        toast.success('Entered voting phase');
+      }
+
+      const updated = {
         ...updatedRaw,
         createdAt: new Date(updatedRaw.createdAt)
-    };
-    setDecisions(decisions.map(d => d.id === decisionId ? updated : d));
+      };
+      setDecisions(decisions.map((d) => (d.id === decisionId ? updated : d)));
+
+    } catch (err: any) {
+      console.error('Error changing stage:', err);
+      toast.error('Failed to update stage');
+    }
   };
 
   const handleCloseDecision = async (decisionId: string) => {
     if (!currentUser) return;
 
-    const { data: updatedRaw, error } = await supabase
-      .from('decisions')
-      .update({ status: 'closed' })
-      .eq('id', decisionId)
-      .select()
-      .single();
+    try {
+      const { data: updatedRaw, error } = await supabase
+        .from('decisions')
+        .update({ status: 'closed' })
+        .eq('id', decisionId)
+        .select()
+        .single();
 
-    if (!error && updatedRaw) {
+      if (error) throw error;
+
       const updated = {
         ...updatedRaw,
         createdAt: new Date(updatedRaw.createdAt)
       };
-      setDecisions(decisions.map(d => d.id === decisionId ? updated : d));
-      toast.success('Decision closed');
-      setTimeout(() => setCurrentView('report'), 500);
+      setDecisions(decisions.map((d) => (d.id === decisionId ? updated : d)));
+
+      toast.success('Decision closed! Generating report...');
+      setTimeout(() => {
+        setCurrentView('report');
+      }, 500);
+    } catch (err: any) {
+      console.error('Error closing decision:', err);
+      toast.error('Failed to close decision');
     }
   };
 
-  // --- Render ---
+  // Login view
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
+          <p className="mt-4 text-muted-foreground">Loading...</p>
+        </div>
+      </div>
+    );
+  }
 
-  if (loading) return <div className="flex h-screen items-center justify-center">Loading...</div>;
+  if (currentView === 'login') {
+    return (
+      <>
+        <AuthForm onAuthSuccess={handleAuthSuccess} />
+        <Toaster />
+      </>
+    );
+  }
 
-  if (currentView === 'login') return <><AuthForm onAuthSuccess={handleAuthSuccess} /><Toaster /></>;
-
-  const selectedDecision = decisions.find(d => d.id === selectedDecisionId);
-  const decisionOptions = options; 
-  const decisionVotes = votes;     
+  const selectedDecision = decisions.find((d) => d.id === selectedDecisionId);
+  const decisionOptions = options;
+  const decisionVotes = votes;
 
   return (
     <>
       {currentView === 'list' && (
-        <div className="min-h-screen bg-background">
-          <div className="max-w-4xl mx-auto p-6 space-y-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <h1>DecisionHub</h1>
-                <p className="text-muted-foreground">User: {currentUser?.name}</p>
+        // 修复：添加了 <> ... </> 包裹
+        <>
+          <div className="min-h-screen bg-background">
+            <div className="max-w-4xl mx-auto p-6 space-y-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h1>DecisionHub</h1>
+                  <p className="text-muted-foreground">
+                    User: {currentUser?.name}
+                  </p>
+                </div>
+                <Button variant="ghost" size="icon" onClick={handleLogout}>
+                  <LogOut className="h-5 w-5" />
+                </Button>
               </div>
-              <Button variant="ghost" size="icon" onClick={handleLogout}><LogOut /></Button>
+
+              <Button onClick={() => setShowCreateDialog(true)} className="w-full">
+                <Plus className="mr-2 h-4 w-4" />
+                Create New Decision
+              </Button>
+
+              <div>
+                <h2 className="mb-4">Decisions</h2>
+                <DecisionList
+                  decisions={decisions}
+                  users={users}
+                  onSelectDecision={handleSelectDecision}
+                />
+              </div>
             </div>
-            <Button onClick={() => setShowCreateDialog(true)} className="w-full"><Plus className="mr-2" /> New Decision</Button>
-            <DecisionList decisions={decisions} users={users} onSelectDecision={handleSelectDecision} />
           </div>
-          <CreateDecisionDialog open={showCreateDialog} onOpenChange={setShowCreateDialog} onCreateDecision={handleCreateDecision} />
-        </div>
+
+          <CreateDecisionDialog
+            open={showCreateDialog}
+            onOpenChange={setShowCreateDialog}
+            onCreateDecision={handleCreateDecision}
+          />
+        </>
       )}
 
       {currentView === 'detail' && selectedDecision && currentUser && (
