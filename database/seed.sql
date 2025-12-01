@@ -6,16 +6,17 @@
 
 -- 1. Clean up existing data to prevent conflicts (Cascading delete)
 TRUNCATE TABLE public.reactions, public.comments, public.votes, public.options, public.decisions CASCADE;
+DELETE FROM auth.users WHERE email IN ('alice@example.com', 'bob@example.com', 'charlie@example.com', 'david@example.com', 'eve@example.com');
 
 -- 2. Create Demo Users (using fixed UUIDs for relationships)
 -- Note: These users are for data association only. You can sign up with these emails to "claim" them if needed.
 INSERT INTO auth.users (id, email, encrypted_password, email_confirmed_at, raw_user_meta_data)
 VALUES 
-  ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', 'alice@example.com',   'dummy_hash', now(), '{"name": "Alice Wang"}'),
-  ('b0eebc99-9c0b-4ef8-bb6d-6bb9bd380b22', 'bob@example.com',     'dummy_hash', now(), '{"name": "Bob Li"}'),
-  ('c0eebc99-9c0b-4ef8-bb6d-6bb9bd380c33', 'charlie@example.com', 'dummy_hash', now(), '{"name": "Charlie Zhang"}'),
-  ('d0eebc99-9c0b-4ef8-bb6d-6bb9bd380d44', 'david@example.com',   'dummy_hash', now(), '{"name": "David Chen"}'),
-  ('e0eebc99-9c0b-4ef8-bb6d-6bb9bd380e55', 'eve@example.com',     'dummy_hash', now(), '{"name": "Eve Wu"}')
+  ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', 'alice@example.com',   '$2a$10$q3Wi9rRwATm7BiOW9Knx8OoYugLlS1mP/qxy9FXUXmzVBnKO3woFa', now(), '{"name": "Alice Wang"}'),
+  ('b0eebc99-9c0b-4ef8-bb6d-6bb9bd380b22', 'bob@example.com',     '$2a$10$q3Wi9rRwATm7BiOW9Knx8OoYugLlS1mP/qxy9FXUXmzVBnKO3woFa', now(), '{"name": "Bob Li"}'),
+  ('c0eebc99-9c0b-4ef8-bb6d-6bb9bd380c33', 'charlie@example.com', '$2a$10$q3Wi9rRwATm7BiOW9Knx8OoYugLlS1mP/qxy9FXUXmzVBnKO3woFa', now(), '{"name": "Charlie Zhang"}'),
+  ('d0eebc99-9c0b-4ef8-bb6d-6bb9bd380d44', 'david@example.com',   '$2a$10$q3Wi9rRwATm7BiOW9Knx8OoYugLlS1mP/qxy9FXUXmzVBnKO3woFa', now(), '{"name": "David Chen"}'),
+  ('e0eebc99-9c0b-4ef8-bb6d-6bb9bd380e55', 'eve@example.com',     '$2a$10$q3Wi9rRwATm7BiOW9Knx8OoYugLlS1mP/qxy9FXUXmzVBnKO3woFa', now(), '{"name": "Eve Wu"}')
 ON CONFLICT (id) DO NOTHING;
 
 
