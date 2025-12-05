@@ -30,7 +30,8 @@ create table public.votes (
   "createdAt" timestamptz not null default now(),
   "userId" uuid not null references auth.users(id),
   "optionId" uuid not null references public.options(id) on delete cascade,
-  "decisionId" uuid not null references public.decisions(id) on delete cascade
+  "decisionId" uuid not null references public.decisions(id) on delete cascade,
+  UNIQUE("userId", "decisionId")
 );
 
 -- 4. Create 'reactions' table
